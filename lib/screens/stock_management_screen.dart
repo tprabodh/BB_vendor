@@ -89,79 +89,94 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
           var userData = snapshot.data!.data() as Map<String, dynamic>;
 
           List<dynamic> menuData = userData['menu'] ?? [];
-          List<Map<String, dynamic>> newMenuItems = [];
-          bool stockResetOccurred = false;
-
+          
           DateTime now = DateTime.now();
           DateTime today = DateTime(now.year, now.month, now.day);
 
+          DateTime lastUpdateDate = today;
+          if (menuData.isNotEmpty && menuData.first['date'] is Timestamp) {
+            lastUpdateDate = (menuData.first['date'] as Timestamp).toDate();
+          }
+          DateTime lastUpdateDay = DateTime(lastUpdateDate.year, lastUpdateDate.month, lastUpdateDate.day);
+
+          if(lastUpdateDay.isBefore(today)) {
+            WidgetsBinding.instance.addPostFrameCallback((_) async {
+              WriteBatch batch = FirebaseFirestore.instance.batch();
+              DocumentReference vendorRef = FirebaseFirestore.instance.collection('vendors').doc(user.uid);
+              DocumentReference stockHistoryRef = FirebaseFirestore.instance.collection('vendor_stock_history').doc(user.uid);
+
+              // 1. Save last active day's data
+              String lastActiveDateString = lastUpdateDay.toIso8601String().split('T')[0];
+              batch.set(stockHistoryRef, {
+                lastActiveDateString: menuData.map((item) => {
+                  'name': item['name'],
+                  'stock': item['stock'],
+                  'todayStockAdded': item['todayStockAdded'],
+                  'todayStockSold': item['todayStockSold'],
+                }).toList(),
+              }, SetOptions(merge: true));
+
+              // 2. Fill in gaps for inactive days
+              int daysDifference = today.difference(lastUpdateDay).inDays;
+              for (int i = 1; i < daysDifference; i++) {
+                DateTime inactiveDay = lastUpdateDay.add(Duration(days: i));
+                String inactiveDateString = inactiveDay.toIso8601String().split('T')[0];
+                batch.set(stockHistoryRef, {
+                  inactiveDateString: menuData.map((item) => {
+                    'name': item['name'],
+                    'stock': 0,
+                    'todayStockAdded': 0,
+                    'todayStockSold': 0,
+                    'stockShiftedToday': 0,
+                  }).toList(),
+                }, SetOptions(merge: true));
+              }
+
+              // 3. Prune data older than 60 days
+              DocumentSnapshot stockHistorySnapshot = await stockHistoryRef.get();
+              if (stockHistorySnapshot.exists) {
+                Map<String, dynamic> stockHistoryData = stockHistorySnapshot.data() as Map<String, dynamic>;
+                Map<String, dynamic> updatedStockHistoryData = {};
+                DateTime sixtyDaysAgo = today.subtract(const Duration(days: 60));
+
+                stockHistoryData.forEach((key, value) {
+                  try {
+                    DateTime recordDate = DateTime.parse(key);
+                    if (recordDate.isAfter(sixtyDaysAgo) || recordDate.isAtSameMomentAs(sixtyDaysAgo)) {
+                      updatedStockHistoryData[key] = value;
+                    }
+                  } catch (e) {
+                    // Ignore keys that are not valid dates
+                  }
+                });
+                batch.set(stockHistoryRef, updatedStockHistoryData);
+              }
+
+              // 4. Reset today's stock data in the main vendor document
+              List<Map<String, dynamic>> resetMenuItems = menuData.map((item) {
+                final Map<String, dynamic> modifiableItem = Map<String, dynamic>.from(item as Map);
+                modifiableItem['stock'] = 0;
+                modifiableItem['todayStockAdded'] = 0;
+                modifiableItem['todayStockSold'] = 0;
+                modifiableItem['totalStockUpdates'] = 0;
+                modifiableItem['date'] = Timestamp.fromDate(today);
+                return modifiableItem;
+              }).toList();
+
+              batch.update(vendorRef, {'menu': resetMenuItems});
+
+              await batch.commit();
+            });
+          }
+
+          _menuItems = menuData.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+
           // Re-initialize controllers if menuData changes or on first load
-          if (_stockControllers.length != menuData.length) {
+          if (_stockControllers.length != _menuItems.length) {
             for (var controller in _stockControllers) {
               controller.dispose();
             }
-            _stockControllers = List.generate(menuData.length, (index) => TextEditingController());
-          }
-
-          for (int i = 0; i < menuData.length; i++) {
-            Map<String, dynamic> menuItem = Map.from(menuData[i]);
-
-            menuItem['totalStockUpdates'] = (menuItem['totalStockUpdates'] as num?)?.toInt() ?? 0;
-            menuItem['todayStockAdded'] = (menuItem['todayStockAdded'] as num?)?.toInt() ?? 0;
-            menuItem['todayStockSold'] = (menuItem['todayStockSold'] as num?)?.toInt() ?? 0;
-            menuItem['stock'] = (menuItem['stock'] as num?)?.toInt() ?? 0;
-
-            // If the item's date is not today, reset stock for display purposes
-            if (menuItem['date'] is Timestamp) {
-              DateTime itemDate = (menuItem['date'] as Timestamp).toDate();
-              DateTime itemDay = DateTime(itemDate.year, itemDate.month, itemDate.day);
-              if (itemDay.year != today.year || itemDay.month != today.month || itemDay.day != today.day) {
-                menuItem['stock'] = 0; // Set stock to 0 for display if not today's date
-              }
-            }
-            menuItem['date'] = menuItem['date'] ?? Timestamp.fromDate(today); // Use 'date' for daily reset
-
-            // Daily reset logic using 'date' field
-            if (menuItem['date'] is Timestamp) {
-              DateTime lastUpdateDate = (menuItem['date'] as Timestamp).toDate();
-              DateTime lastUpdateDay = DateTime(lastUpdateDate.year, lastUpdateDate.month, lastUpdateDate.day);
-
-              if (lastUpdateDay.year != today.year || lastUpdateDay.month != today.month || lastUpdateDay.day != today.day) {
-                menuItem['todayStockAdded'] = 0;
-                menuItem['todayStockSold'] = 0;
-                menuItem['totalStockUpdates'] = 0; // Reset totalStockUpdates on new day
-                stockResetOccurred = true;
-              }
-            } else {
-              // If 'date' is not a Timestamp, initialize it and reset today's counts
-              menuItem['todayStockAdded'] = 0;
-              menuItem['todayStockSold'] = 0;
-              menuItem['totalStockUpdates'] = 0; // Explicitly reset here
-              stockResetOccurred = true;
-            }
-
-            newMenuItems.add(menuItem);
-            // Update controller text when not editing
-            if (!_isEditing) {
-              _stockControllers[i].text = menuItem['stock'].toString();
-            }
-          }
-          _menuItems = newMenuItems;
-
-          if (stockResetOccurred) {
-            WidgetsBinding.instance.addPostFrameCallback((_) async {
-              WriteBatch batch = FirebaseFirestore.instance.batch();
-              batch.update(FirebaseFirestore.instance.collection('vendors').doc(user.uid), {
-                'menu': _menuItems.map((item) {
-                  return {
-                    ...item,
-                    // Ensure 'date' is always a Timestamp when saving to Firestore
-                    'date': item['date'] is DateTime ? Timestamp.fromDate(item['date'] as DateTime) : item['date'],
-                  };
-                }).toList(),
-              });
-              await batch.commit();
-            });
+            _stockControllers = List.generate(_menuItems.length, (index) => TextEditingController(text: (_menuItems[index]['stock'] ?? 0).toString()));
           }
 
           _isTracking = userData['isTracking'] ?? false; // Update _isTracking state from Firestore
@@ -195,14 +210,26 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
                       secondary: const Icon(Icons.location_on),
                     ),
                     const SizedBox(height: 20.0),
-                    ElevatedButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (context) => const EditProfileScreen()),
-                        );
-                      },
-                      child: const Text('Edit Profile'),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ElevatedButton(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const EditProfileScreen()),
+                            );
+                          },
+                          child: const Text('Edit Profile'),
+                        ),
+                        const SizedBox(height: 10),
+                        ElevatedButton(
+                          onPressed: () {
+                            _showShiftStockDialog();
+                          },
+                          child: const Text('Shift Stock'),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 20.0),
                     const Text(
@@ -356,6 +383,28 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
 
                       String todayDateString = DateTime.now().toIso8601String().split('T')[0];
                       DocumentReference stockHistoryRef = FirebaseFirestore.instance.collection('vendor_stock_history').doc(user.uid);
+                      
+                      // Prune data older than 60 days
+                      DocumentSnapshot stockHistorySnapshot = await stockHistoryRef.get();
+                      if (stockHistorySnapshot.exists) {
+                        Map<String, dynamic> stockHistoryData = stockHistorySnapshot.data() as Map<String, dynamic>;
+                        Map<String, dynamic> updatedStockHistoryData = {};
+                        DateTime today = DateTime.now();
+                        DateTime sixtyDaysAgo = today.subtract(const Duration(days: 60));
+
+                        stockHistoryData.forEach((key, value) {
+                          try {
+                            DateTime recordDate = DateTime.parse(key);
+                            if (recordDate.isAfter(sixtyDaysAgo) || recordDate.isAtSameMomentAs(sixtyDaysAgo)) {
+                              updatedStockHistoryData[key] = value;
+                            }
+                          } catch (e) {
+                            // Ignore keys that are not valid dates
+                          }
+                        });
+                        batch.set(stockHistoryRef, updatedStockHistoryData);
+                      }
+
                       batch.set(stockHistoryRef, {
                         todayDateString: _editingMenuItems.map((item) {
                           return {
@@ -419,6 +468,155 @@ class _StockManagementScreenState extends State<StockManagementScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  void _showShiftStockDialog() {
+    final _shiftFormKey = GlobalKey<FormState>();
+    List<TextEditingController> _shiftControllers = List.generate(_menuItems.length, (index) => TextEditingController());
+    TextEditingController _vendorIdController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Shift Stock'),
+              content: Form(
+                key: _shiftFormKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        height: 300, // Give a fixed height to the ListView
+                        width: double.maxFinite,
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: _menuItems.length,
+                          itemBuilder: (context, index) {
+                            final item = _menuItems[index];
+                            return Row(
+                              children: [
+                                Expanded(child: Text('${item['name']} (${item['stock']})')),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: TextFormField(
+                                    controller: _shiftControllers[index],
+                                    keyboardType: TextInputType.number,
+                                    decoration: const InputDecoration(hintText: 'Qty'),
+                                    validator: (val) {
+                                      if (val != null && val.isNotEmpty) {
+                                        int? qty = int.tryParse(val);
+                                        if (qty == null || qty < 0) {
+                                          return 'Invalid';
+                                        }
+                                        if (qty > (item['stock'] as int)) {
+                                          return 'Too high';
+                                        }
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      TextFormField(
+                        controller: _vendorIdController,
+                        decoration: const InputDecoration(labelText: 'Destination Vendor ID'),
+                        validator: (val) {
+                          if (val == null || val.isEmpty || val.length != 6) {
+                            return 'Enter a 6-digit ID';
+                          }
+                          return null;
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    if (_shiftFormKey.currentState!.validate()) {
+                      final sourceUser = FirebaseAuth.instance.currentUser;
+                      if (sourceUser == null) return;
+
+                      final destinationVendorId = _vendorIdController.text;
+                      final querySnapshot = await FirebaseFirestore.instance
+                          .collection('vendors')
+                          .where('uniqueId', isEqualTo: destinationVendorId)
+                          .limit(1)
+                          .get();
+
+                      if (querySnapshot.docs.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Destination vendor not found')),
+                        );
+                        return;
+                      }
+                      final destinationVendorDoc = querySnapshot.docs.first;
+
+                      WriteBatch batch = FirebaseFirestore.instance.batch();
+
+                      // Update source vendor
+                      DocumentReference sourceVendorRef = FirebaseFirestore.instance.collection('vendors').doc(sourceUser.uid);
+                      List<Map<String, dynamic>> updatedSourceMenu = [];
+                      for (int i = 0; i < _menuItems.length; i++) {
+                        final item = Map<String, dynamic>.from(_menuItems[i]);
+                        int shiftQty = int.tryParse(_shiftControllers[i].text) ?? 0;
+                        if (shiftQty > 0) {
+                          item['stock'] = (item['stock'] as int) - shiftQty;
+                          item['stockShiftedToday'] = (item['stockShiftedToday'] ?? 0) + shiftQty;
+                        }
+                        updatedSourceMenu.add(item);
+                      }
+                      batch.update(sourceVendorRef, {'menu': updatedSourceMenu});
+
+                      // Update destination vendor
+                      DocumentReference destinationVendorRef = destinationVendorDoc.reference;
+                      List<dynamic> destinationMenuData = destinationVendorDoc.data()['menu'] ?? [];
+                      List<Map<String, dynamic>> updatedDestinationMenu = [];
+                      for (var destItemData in destinationMenuData) {
+                        final destItem = Map<String, dynamic>.from(destItemData as Map);
+                        int sourceItemIndex = _menuItems.indexWhere((srcItem) => srcItem['name'] == destItem['name']);
+                        if(sourceItemIndex != -1) {
+                            int shiftQty = int.tryParse(_shiftControllers[sourceItemIndex].text) ?? 0;
+                            if(shiftQty > 0) {
+                                destItem['stock'] = (destItem['stock'] as int) + shiftQty;
+                                destItem['todayStockAdded'] = (destItem['todayStockAdded'] ?? 0) + shiftQty;
+                                destItem['totalStockUpdates'] = (destItem['totalStockUpdates'] ?? 0) + 1;
+                                destItem['date'] = Timestamp.now();
+                            }
+                        }
+                        updatedDestinationMenu.add(destItem);
+                      }
+                      batch.update(destinationVendorRef, {'menu': updatedDestinationMenu});
+
+                      await batch.commit();
+
+                      Navigator.of(context).pop();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Stock shifted successfully!')),
+                      );
+                    }
+                  },
+                  child: const Text('Shift'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

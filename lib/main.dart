@@ -1,5 +1,6 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:vendor_app/screens/initial_checks_screen.dart';
 import 'package:vendor_app/screens/wrapper.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -77,7 +78,7 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ),
-      home: Wrapper(),
+      home: InitialChecksScreen(),
     );
   }
 }

@@ -1,6 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:vendor_app/auth/auth_service.dart';
+import 'package:vendor_app/screens/initial_checks_screen.dart';
+
+import 'home_screen.dart';
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});
@@ -200,7 +203,11 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                               
                               if (!mounted) return;
                               
-                              Navigator.pop(context);
+                              Navigator.pushAndRemoveUntil(
+                                context,
+                                MaterialPageRoute(builder: (context) => InitialChecksScreen()),
+                                (Route<dynamic> route) => false,
+                              );
                             }
                           }
                         },
