@@ -45,6 +45,11 @@ dependencies:
   provider: ^6.0.0
   google_fonts: ^6.2.1
   connectivity_plus: ^6.0.3
+  intl: ^0.20.2
+  pdf: ^3.11.3
+  printing: ^5.14.2
+  path_provider: ^2.1.1 # Added for temporary file paths
+  share_plus: ^7.2.1 # Added for sharing files
 
 dev_dependencies:
   flutter_test:
@@ -90,6 +95,7 @@ flutter:
   assets:
     - assets/BBE LOGO.png
     - assets/customer_app_logo_.png
+    - assets/fonts/Roboto-Regular.ttf
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

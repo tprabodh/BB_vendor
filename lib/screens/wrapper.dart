@@ -8,8 +8,12 @@ class Wrapper extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(
-      stream: FirebaseAuth.instance.authStateChanges(),
+      stream: FirebaseAuth.instance.userChanges(),
       builder: (context, snapshot) {
+        print('Wrapper - StreamBuilder: connectionState = ${snapshot.connectionState}');
+        print('Wrapper - StreamBuilder: hasData = ${snapshot.hasData}');
+        print('Wrapper - StreamBuilder: user = ${snapshot.data?.uid}');
+
         if (snapshot.connectionState == ConnectionState.active) {
           final User? user = snapshot.data;
           return user == null ? const LoginScreen() : const HomeScreen();

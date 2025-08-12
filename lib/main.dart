@@ -1,12 +1,17 @@
+import 'package:firebase_auth/firebase_auth.dart'; // Add this import
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:vendor_app/screens/initial_checks_screen.dart';
-import 'package:vendor_app/screens/wrapper.dart';
+
 import 'package:google_fonts/google_fonts.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  print('main: WidgetsFlutterBinding.ensureInitialized() called');
+  print('main: Calling Firebase.initializeApp()');
   await Firebase.initializeApp();
+  print('main: Firebase.initializeApp() completed');
+  
   runApp(MyApp());
 }
 

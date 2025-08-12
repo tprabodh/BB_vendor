@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:vendor_app/auth/auth_service.dart';
 import 'package:vendor_app/screens/initial_checks_screen.dart';
 
-import 'home_screen.dart';
+
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});
